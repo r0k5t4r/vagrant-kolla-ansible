@@ -1,227 +1,113 @@
-# OpenStack Lab on VMware ESXi with Vagrant
+#!/usr/bin/ruby
+# Below you can define specific parameters for each individual VM to be deployed by Vagrant.
+# ip = assign this static IP
+# box = which vagrant box should be deployed
+# osd = configure an additonal virtual disk
+# osdsize = size of the additional virtual disk in GB
+# the remaining parameters should be pretty much self explanatory :)
+# run the following to fix vagrant ssh issue
+# set VAGRANT_PREFER_SYSTEM_BIN=0
+# https://stackoverflow.com/questions/51437693/permission-denied-with-vagrant
 
-This repository provides a **multi-node OpenStack lab environment** deployed via **Vagrant on VMware ESXi**.
-Virtual machines are cloned from a **CentOS Stream 8 template** and prepared for use as seed, control, and compute nodes.
+nodes = [
+	{ :hostname => 'seed', 		:ip => '192.168.45.210', :public_ip => '192.168.2.210', :box => 'bento/centos-stream-8', :clone_from => 'template-centos8stream', :cpus => 4, :ram => 8192, :osd => 'no', :osdsize => 200, :hv => 'no', 	:esxi => 'yes' },
+	{ :hostname => 'control01', :ip => '192.168.45.211', :public_ip => '192.168.2.211', :box => 'bento/centos-stream-8', :clone_from => 'template-centos8stream', :cpus => 2, :ram => 8192, :osd => 'no', :osdsize => 200, :hv => 'no', 	:esxi => 'yes' },
+	{ :hostname => 'control02', :ip => '192.168.45.212', :public_ip => '192.168.2.212', :box => 'bento/centos-stream-8', :clone_from => 'template-centos8stream', :cpus => 2, :ram => 8192, :osd => 'no', :osdsize => 200, :hv => 'no',		:esxi => 'yes' },
+	{ :hostname => 'control03', :ip => '192.168.45.213', :public_ip => '192.168.2.213', :box => 'bento/centos-stream-8', :clone_from => 'template-centos8stream', :cpus => 2, :ram => 8192, :osd => 'no', :osdsize => 200, :hv => 'no', 	:esxi => 'yes' },
+	{ :hostname => 'compute01', :ip => '192.168.45.214', :public_ip => '192.168.2.214', :box => 'bento/centos-stream-8', :clone_from => 'template-centos8stream', :cpus => 2, :ram => 4096, :osd => 'no', :osdsize => 200, :hv => 'yes',	:esxi => 'yes' },
+	{ :hostname => 'compute02', :ip => '192.168.45.215', :public_ip => '192.168.2.215', :box => 'bento/centos-stream-8', :clone_from => 'template-centos8stream', :cpus => 2, :ram => 4096, :osd => 'no', :osdsize => 200, :hv => 'yes', 	:esxi => 'yes' },
+]
 
-This setup is intended for **testing, development, automation, and learning OpenStack internals**.
-It is **not intended for production use**.
+varDomain = "fritz.box"
+varRepository = "files"
 
----
+$logger = Log4r::Logger.new('vagrantfile')
+def read_ip_address(machine)
 
-## 🧱 Architecture Overview
+  command = "hostname -I | cut -d ' ' -f 2"
+  result  = ""
 
-```
-                       Management / Public Network
-                           192.168.2.0/24
- ┌──────────────────────────────────────────────────────────┐
- │                                                          │
- │   seed        control01   control02   control03          │
- │   .210        .211        .212        .213               │
- │                                                          │
- │   compute01   compute02                                 │
- │   .214        .215                                     │
- │                                                          │
- └──────────────────────────────────────────────────────────┘
-              │
-              │
-              ▼
-        Private / Internal Network
-           192.168.45.0/24
-```
+  $logger.info "Processing #{ machine.name } ... "
 
-### Node Roles
+  begin
+    # sudo is needed for ifconfig
+    machine.communicate.sudo(command) do |type, data|
+      result << data if type == :stdout
+    end
+    $logger.info "Processing #{ machine.name } ... success"
+  rescue
+    result = "# NOT-UP"
+    $logger.info "Processing #{ machine.name } ... not running"
+  end
+  
+  result.chomp
+end																					 
 
-| Hostname   | Role              | Nested Virt |
-|------------|-------------------|-------------|
-| seed       | Deployment / Ansible | No |
-| control01  | OpenStack Control   | No |
-| control02  | OpenStack Control   | No |
-| control03  | OpenStack Control   | No |
-| compute01  | OpenStack Compute   | Yes |
-| compute02  | OpenStack Compute   | Yes |
-
----
-
-## 📦 Requirements
-
-### Software
-- Vagrant ≥ 2.x
-- Ruby
-- VMware ESXi
-- `vagrant-vmware-esxi` plugin
-- `vagrant-hostmanager` plugin
-
-Install required plugins:
-```bash
-vagrant plugin install vagrant-vmware-esxi
-vagrant plugin install vagrant-hostmanager
-```
-
-If you encounter SSH permission issues:
-```bash
-export VAGRANT_PREFER_SYSTEM_BIN=0
-```
-
----
-
-## 🖥️ ESXi Prerequisites
-
-### ESXi Host
-- Address: `192.168.2.10`
-- SSH enabled
-
-### Template VM
-A **pre-existing CentOS Stream 8 template** is required:
-
-| Setting              | Value |
-|----------------------|-------|
-| Template name        | `template-centos8stream` |
-| OS                   | CentOS Stream 8 |
-| SSH enabled          | Yes |
-| Network              | VM Network |
-| Disk                 | Single system disk |
-
-### ESXi Configuration Used
-- Datastore: `truenas_nvme_01`
-- Network: `VM Network`
-- NIC type: `vmxnet3`
-- Resource pool: `/`
-
-Credentials are read securely using:
-```
-esxi.esxi_password = 'file:'
-```
-
----
-
-## ⚙️ Node Configuration
-
-Nodes are defined in the `nodes` array in the `Vagrantfile`.
-
-Example:
-```ruby
-{
-  :hostname => 'compute01',
-  :ip => '192.168.45.214',
-  :public_ip => '192.168.2.214',
-  :clone_from => 'template-centos8stream',
-  :cpus => 2,
-  :ram => 4096,
-  :hv => 'yes',
-  :esxi => 'yes'
-}
-```
-
-### Supported Parameters
-
-| Parameter     | Description |
-|--------------|-------------|
-| `hostname`   | VM hostname |
-| `ip`         | Internal / private IP |
-| `public_ip`  | Public / management IP |
-| `clone_from` | ESXi template name |
-| `cpus`       | Number of vCPUs |
-| `ram`        | Memory in MB |
-| `hv`         | Enable nested virtualization |
-| `esxi`       | Must be `yes` |
-
----
-
-## 🌐 Networking
-
-Each VM uses **three NICs**:
-
-1. Auto-assigned network (Vagrant / ESXi)
-2. Management / Public network (`192.168.2.0/24`)
-3. Internal / Private network (`192.168.45.0/24`)
-
-This layout matches common **OpenStack reference architectures**.
-
----
-
-## 🧠 Provisioning
-
-This Vagrantfile focuses on **infrastructure deployment only**.
-
-Optional provisioning hooks (currently commented):
-- Root SSH access setup
-- System updates
-
-Provisioning is typically handled later via:
-- Ansible
-- Kolla-Ansible
-- Manual bootstrap from `seed` node
-
----
-
-## 🌍 Hostname Resolution
-
-The setup uses **vagrant-hostmanager**:
-
-- Guest `/etc/hosts` is automatically updated
-- Host system is not modified
-- IP resolution happens dynamically via SSH
-
----
-
-## 🚀 Usage
-
-Start the full lab:
-```bash
-vagrant up
-```
-
-Start a single node:
-```bash
-vagrant up compute01
-```
-
-SSH into seed node:
-```bash
-vagrant ssh seed
-```
-
-Destroy everything:
-```bash
-vagrant destroy -f
-```
-
----
-
-## ✅ Post-Deployment Checks
-
-Verify networking:
-```bash
-ip a
-ip route
-```
-
-Verify nested virtualization (compute nodes):
-```bash
-egrep -c '(vmx|svm)' /proc/cpuinfo
-```
-
-Should return a value > 0.
-
----
-
-## ⚠️ Notes & Warnings
-
-- Lab environment only
-- Nested virtualization enabled on compute nodes
-- Static IPs must be unused
-- No security hardening applied
-- No backups configured
-
----
-
-## 🎯 Intended Use
-
-- OpenStack testing & learning
-- Kolla-Ansible deployments
-- Network and compute experimentation
-- ESXi-based lab automation
-
----
-
-Happy hacking ☁️🚀
+Vagrant.configure("2") do |config|
+	config.vm.synced_folder('.', '/vagrant', type: 'nfs', disabled: true)
+	config.vm.synced_folder('.', '/Vagrantfiles', type: 'rsync', disabled: false)
+    nodes.each do |node|
+        config.vm.define node[:hostname] do |node_config|
+			memory = node[:ram] ? node[:ram] : 512;
+			osddisksize = node[:osdsize] ? node[:osdsize] : 100;
+			vcpus = node[:cpus] ? node[:cpus] : 1;
+			vmbox = node[:clone_from] ? 'esxi_clone/dummy' : node[:box];
+			#puts "Setting config.vm.box for VM #{node[:hostname]} to #{vmbox}"
+			node_config.vm.box = vmbox
+            #node_config.hostmanager.aliases = "#{node[:hostname]}"
+			#node_config.hostmanager.aliases = "#{node[:hostname]}.#{varDomain}"
+			#node_config.vm.hostname = node[:hostname]
+			node_config.vm.hostname = "#{node[:hostname]}.#{varDomain}"
+			node_config.vm.network "public_network", "ip": '0.0.0.0', auto_network: true			
+			node_config.vm.network 'public_network', ip: node[:public_ip], netmask: '255.255.255.0'
+			node_config.vm.network 'public_network', ip: node[:ip], netmask: '255.255.255.0'
+			#node_config.vm.provision "shell", path: "scripts/setup_ssh_root_access.sh"
+			#node_config.vm.provision "shell", path: "scripts/yum-update.sh"			
+			node_config.vm.post_up_message = "This is the start up message!"
+			
+			if node[:esxi] == "yes"
+				node_config.vm.provider :vmware_esxi do |esxi|
+					esxi.esxi_hostname = '192.168.2.10'
+					esxi.esxi_username = 'root'
+					esxi.esxi_password = 'file:'
+					esxi.clone_from_vm = node[:clone_from]
+					esxi.esxi_resource_pool = "/"
+					esxi.esxi_disk_store = 'truenas_nvme_01'
+					esxi.esxi_virtual_network = ['VM Network','VM Network','VM Network']
+					esxi.guest_memsize = memory.to_s
+					esxi.guest_numvcpus = vcpus.to_s
+					esxi.local_allow_overwrite = 'True'
+					esxi.guest_nic_type = 'vmxnet3'
+					#esxi.local_use_ip_cache = 'False'
+					esxi.debug = 'true'
+					if node[:hv] == "yes"
+						esxi.guest_custom_vmx_settings = [['vhv.enable','TRUE']]
+					end #if node[:hv] == "yes"
+				end #node_config.vm.provider :vmware_esxi do |esxi|
+			end #if node[:esxi] == "yes"
+			if node[:esxi] == "no"
+				node_config.vm.provider :virtualbox do |v|					
+					v.customize ["modifyvm", :id, "--memory", memory.to_s]
+					v.customize ["modifyvm", :id, "--cpus", vcpus.to_s]
+					if node[:osd] == "yes"
+						v.customize [ "createhd", "--filename", "disk_osd-#{node[:hostname]}", "--size", "10000" ]
+						v.customize [ "storageattach", :id, "--storagectl", "SATA Controller", "--port", 3, "--device", 0, "--type", "hdd", "--medium", "disk_osd-#{node[:hostname]}.vdi" ]
+					end #if node[:osd] == "yes"
+					if node[:hv] == "yes"         
+						v.customize ['modifyvm', :id, '--nested-hw-virt', 'on']
+					end #if node[:hv] == "yes"					
+				end #node_config.vm.provider :virtualbox do |v|
+			end #if node[:esxi] == "no"
+		end #config.vm.define node[:hostname] do |node_config|
+		config.hostmanager.enabled = true
+		config.hostmanager.manage_host = false
+		config.hostmanager.manage_guest = true
+		#config.hostmanager.ignore_private_ip = false
+		#config.hostmanager.include_offline = true
+		if Vagrant.has_plugin?("HostManager")
+			config.hostmanager.ip_resolver = proc do |vm, resolving_vm|
+				read_ip_address(vm)
+			end
+		end
+	end #nodes.each do |node|
+end #Vagrant.configure("2") do |config|
